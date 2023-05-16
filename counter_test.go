@@ -10,15 +10,19 @@ import (
 )
 
 func TestSlidingWindow(t *testing.T) {
-	now := time.Now().UnixMilli()
+	minute := int64(time.Minute / time.Millisecond)
+	second := int64(time.Second / time.Millisecond)
 
-	c := NewSlidingWindow(now, int64(time.Minute), 60)
+	start := time.Now().UnixMilli()
+	now := start
 
-	now += int64(time.Second) / 5
+	c := NewSlidingWindow(now, minute, 60)
+
+	now += second / 5
 
 	for i := 0; i < 60; i++ {
 		c.Advance(now, 10)
-		now += int64(time.Second)
+		now += second
 	}
 	count := c.Advance(now, 0)
 	t.Log(count, c)
@@ -26,15 +30,15 @@ func TestSlidingWindow(t *testing.T) {
 		t.FailNow()
 	}
 
-	now += 6 * int64(time.Second) / 5
-	count = c.Advance(now, 0)
+	now += 6 * second / 5
+	count = c.Radvance(now, start, 0)
 	t.Log(count, c)
 	if count != 586 {
 		t.FailNow()
 	}
 
 	now += int64(2 * time.Minute)
-	count = c.Advance(now, 20)
+	count = c.Radvance(now, 0, 20)
 	t.Log(count, c)
 	if count != 20 {
 		t.FailNow()
@@ -42,11 +46,17 @@ func TestSlidingWindow(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		c.Advance(now, 10)
-		now += int64(time.Second)
+		c.Radvance(now, now-second, 2)
+		now += second
 	}
 	count = c.Advance(now, 0)
 	t.Log(count, c)
-	if count != 608 {
+	if count != 610 {
+		t.FailNow()
+	}
+	count = c.Radvance(now, now-second, 15)
+	t.Log(count, c)
+	if count != 613 {
 		t.FailNow()
 	}
 }
