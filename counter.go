@@ -15,6 +15,7 @@ type Counter interface {
 	Advance(now int64, delta int64) (count int64)
 	// R stands for replace.
 	Radvance(now, last int64, delta int64) (count int64)
+	Zero()
 }
 
 type accumulator struct {
@@ -31,6 +32,10 @@ func (c *accumulator) Advance(now int64, delta int64) int64 {
 
 func (c *accumulator) Radvance(now, last int64, delta int64) int64 {
 	return atomic.AddInt64(&c.count, 0)
+}
+
+func (c *accumulator) Zero() {
+	atomic.StoreInt64(&c.count, 0)
 }
 
 type slidingWindow struct {
@@ -50,6 +55,16 @@ func NewSlidingWindow(start, window int64, slots int) Counter {
 		count: 0,
 		now:   start,
 	}
+}
+
+func (c *slidingWindow) Zero() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for i := 0; i < len(c.slots); i++ {
+		c.slots[i] = 0
+	}
+	c.count = 0
 }
 
 func (c *slidingWindow) Advance(now int64, delta int64) int64 {

@@ -59,4 +59,16 @@ func TestSlidingWindow(t *testing.T) {
 	if count != 613 {
 		t.FailNow()
 	}
+
+	c.Zero()
+
+	for i := 0; i < 60; i++ {
+		c.Advance(now, 10)
+		now += second
+	}
+	count = c.Advance(now, 0)
+	t.Log(count, c)
+	if count != 596 {
+		t.FailNow()
+	}
 }
