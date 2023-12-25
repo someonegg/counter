@@ -13,8 +13,9 @@ import (
 // Counter is safe for concurrent use by multiple goroutines.
 type Counter interface {
 	Advance(now int64, delta int64) (count int64)
-	// R stands for replace.
-	Radvance(now, last int64, delta int64) (count int64)
+	Revoke(hist int64, delta int64) (count int64)
+	// Revoke then Advance.
+	Radvance(now, hist int64, delta int64) (count int64)
 	Zero()
 }
 
@@ -30,7 +31,11 @@ func (c *accumulator) Advance(now int64, delta int64) int64 {
 	return atomic.AddInt64(&c.count, delta)
 }
 
-func (c *accumulator) Radvance(now, last int64, delta int64) int64 {
+func (c *accumulator) Revoke(hist int64, delta int64) int64 {
+	return atomic.AddInt64(&c.count, -delta)
+}
+
+func (c *accumulator) Radvance(now, hist int64, delta int64) int64 {
 	return atomic.AddInt64(&c.count, 0)
 }
 
@@ -70,33 +75,26 @@ func (c *slidingWindow) Zero() {
 func (c *slidingWindow) Advance(now int64, delta int64) int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.advance(now, delta)
+	c.advance(now, delta)
+	return c.calculate()
 }
 
-func (c *slidingWindow) Radvance(now, last int64, delta int64) int64 {
+func (c *slidingWindow) Revoke(hist int64, delta int64) int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	C := int64(len(c.slots))
-	current := (c.now - c.start) / c.step
-	if current < 0 {
-		current = 0
-	}
-	prev := (last - c.start) / c.step
-
-	if prev >= 0 && current-prev >= 0 && current-prev < C {
-		reduce := delta
-		if reduce > c.slots[prev%C] {
-			reduce = c.slots[prev%C]
-		}
-		c.slots[prev%C] -= reduce
-		c.count -= reduce
-	}
-
-	return c.advance(now, delta)
+	c.revoke(hist, delta)
+	return c.calculate()
 }
 
-func (c *slidingWindow) advance(now int64, delta int64) int64 {
+func (c *slidingWindow) Radvance(now, hist int64, delta int64) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.revoke(hist, delta)
+	c.advance(now, delta)
+	return c.calculate()
+}
+
+func (c *slidingWindow) advance(now int64, delta int64) {
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
 	if current < 0 {
@@ -112,7 +110,7 @@ func (c *slidingWindow) advance(now int64, delta int64) int64 {
 		c.slots[next%C] += delta
 		c.count += delta
 		c.now = now
-		return c.calculate()
+		return
 	}
 
 	// quick reset
@@ -123,7 +121,7 @@ func (c *slidingWindow) advance(now int64, delta int64) int64 {
 		c.slots[next%C] = delta
 		c.count = delta
 		c.now = now
-		return c.calculate()
+		return
 	}
 
 	// other
@@ -134,7 +132,24 @@ func (c *slidingWindow) advance(now int64, delta int64) int64 {
 	c.slots[next%C] += delta
 	c.count += delta
 	c.now = now
-	return c.calculate()
+}
+
+func (c *slidingWindow) revoke(hist int64, delta int64) {
+	C := int64(len(c.slots))
+	current := (c.now - c.start) / c.step
+	if current < 0 {
+		current = 0
+	}
+	prev := (hist - c.start) / c.step
+
+	if prev >= 0 && current-prev >= 0 && current-prev < C {
+		reduce := delta
+		if reduce > c.slots[prev%C] {
+			reduce = c.slots[prev%C]
+		}
+		c.slots[prev%C] -= reduce
+		c.count -= reduce
+	}
 }
 
 func (c *slidingWindow) calculate() int64 {

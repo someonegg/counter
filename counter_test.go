@@ -46,7 +46,12 @@ func TestSlidingWindow(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		c.Advance(now, 10)
-		c.Radvance(now, now-second, 2)
+		if i%2 == 0 {
+			c.Revoke(now-second, 2)
+			c.Advance(now, 2)
+		} else {
+			c.Radvance(now, now-second, 2)
+		}
 		now += second
 	}
 	count = c.Advance(now, 0)
