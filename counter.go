@@ -13,8 +13,9 @@ import (
 // Counter is safe for concurrent use by multiple goroutines.
 type Counter interface {
 	Advance(now int64, delta int64) (count int64)
+	// Revoke try to undo the delta of that historical moment.
 	Revoke(hist int64, delta int64) (count int64)
-	// Revoke then Advance.
+	// Radvance will Revoke and then Advance.
 	Radvance(now, hist int64, delta int64) (count int64)
 	Zero()
 }
