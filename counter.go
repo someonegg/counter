@@ -45,7 +45,7 @@ func (c *accumulator) Zero() {
 }
 
 type slidingWindow struct {
-	mu    sync.Mutex
+	l     sync.Locker
 	start int64
 	step  int64
 	slots []int64
@@ -54,7 +54,15 @@ type slidingWindow struct {
 }
 
 func NewSlidingWindow(start, window int64, slots int) Counter {
+	return NewSlidingWindowEx(start, window, slots, nil)
+}
+
+func NewSlidingWindowEx(start, window int64, slots int, l sync.Locker) Counter {
+	if l == nil {
+		l = &sync.Mutex{}
+	}
 	return &slidingWindow{
+		l:     l,
 		start: start,
 		step:  window / int64(slots),
 		slots: make([]int64, slots+1),
@@ -64,9 +72,8 @@ func NewSlidingWindow(start, window int64, slots int) Counter {
 }
 
 func (c *slidingWindow) Zero() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	c.l.Lock()
+	defer c.l.Unlock()
 	for i := 0; i < len(c.slots); i++ {
 		c.slots[i] = 0
 	}
@@ -74,22 +81,22 @@ func (c *slidingWindow) Zero() {
 }
 
 func (c *slidingWindow) Advance(now int64, delta int64) int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.l.Lock()
+	defer c.l.Unlock()
 	c.advance(now, delta)
 	return c.calculate()
 }
 
 func (c *slidingWindow) Revoke(hist int64, delta int64) int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.l.Lock()
+	defer c.l.Unlock()
 	c.revoke(hist, delta)
 	return c.calculate()
 }
 
 func (c *slidingWindow) Radvance(now, hist int64, delta int64) int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.l.Lock()
+	defer c.l.Unlock()
 	c.revoke(hist, delta)
 	c.advance(now, delta)
 	return c.calculate()
