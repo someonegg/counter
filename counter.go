@@ -18,17 +18,26 @@ type Counter interface {
 	// Radvance will Revoke and then Advance.
 	Radvance(now, hist int64, delta int64) (count int64)
 	Zero()
+
+	Duration() int64
 }
 
 type accumulator struct {
+	start int64
+	now   int64
 	count int64
 }
 
 func NewAccumulator() Counter {
-	return &accumulator{}
+	return NewAccumulatorEx(0)
+}
+
+func NewAccumulatorEx(start int64) Counter {
+	return &accumulator{start: start}
 }
 
 func (c *accumulator) Advance(now int64, delta int64) int64 {
+	c.now = now
 	return atomic.AddInt64(&c.count, delta)
 }
 
@@ -37,11 +46,16 @@ func (c *accumulator) Revoke(hist int64, delta int64) int64 {
 }
 
 func (c *accumulator) Radvance(now, hist int64, delta int64) int64 {
+	c.now = now
 	return atomic.AddInt64(&c.count, 0)
 }
 
 func (c *accumulator) Zero() {
 	atomic.StoreInt64(&c.count, 0)
+}
+
+func (c *accumulator) Duration() int64 {
+	return c.now - c.start
 }
 
 type slidingWindow struct {
@@ -100,6 +114,17 @@ func (c *slidingWindow) Radvance(now, hist int64, delta int64) int64 {
 	c.revoke(hist, delta)
 	c.advance(now, delta)
 	return c.calculate()
+}
+
+func (c *slidingWindow) Duration() int64 {
+	c.l.Lock()
+	defer c.l.Unlock()
+	win := c.step * int64(len(c.slots)-1)
+	dur := c.now - c.start
+	if dur > win {
+		dur = win
+	}
+	return dur
 }
 
 func (c *slidingWindow) advance(now int64, delta int64) {
