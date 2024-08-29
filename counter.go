@@ -6,6 +6,7 @@
 package counter
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -20,6 +21,7 @@ type Counter interface {
 	Zero()
 
 	Duration() int64
+	Dump() (start, end int64, deltas []int64, deltaStep int64)
 }
 
 type accumulator struct {
@@ -58,6 +60,14 @@ func (c *accumulator) Duration() int64 {
 	return c.now - c.start
 }
 
+func (c *accumulator) Dump() (start, end int64, deltas []int64, deltaStep int64) {
+	start = c.start
+	end = c.now
+	deltas = []int64{c.count}
+	deltaStep = end - start
+	return
+}
+
 type slidingWindow struct {
 	l     sync.Locker
 	start int64
@@ -68,10 +78,15 @@ type slidingWindow struct {
 }
 
 func NewSlidingWindow(start, window int64, slots int) Counter {
-	return NewSlidingWindowEx(start, window, slots, nil)
+	return newSlidingWindow(start, window, slots, nil)
 }
 
+// NewSlidingWindowEx : use sync.Mutex when l is nil.
 func NewSlidingWindowEx(start, window int64, slots int, l sync.Locker) Counter {
+	return newSlidingWindow(start, window, slots, l)
+}
+
+func newSlidingWindow(start, window int64, slots int, l sync.Locker) *slidingWindow {
 	if l == nil {
 		l = &sync.Mutex{}
 	}
@@ -194,4 +209,63 @@ func (c *slidingWindow) calculate() int64 {
 	expired := c.slots[(current+1)%C]
 	percent := float64((c.now-c.start)%c.step) / float64(c.step)
 	return c.count - int64(float64(expired)*percent)
+}
+
+func (c *slidingWindow) Dump() (start, end int64, deltas []int64, deltaStep int64) {
+	c.l.Lock()
+	defer c.l.Unlock()
+
+	C := int64(len(c.slots))
+	current := (c.now - c.start) / c.step
+	if current < 0 {
+		current = 0
+	}
+
+	begin := int64(0)
+	if current >= C {
+		begin = current - (C - 1)
+	}
+
+	slots := make([]int64, 0, len(c.slots))
+	for i := begin; i <= current; i++ {
+		slots = append(slots, c.slots[i%C])
+	}
+
+	start = c.start + begin*c.step
+	end = c.now
+	deltas = slots
+	deltaStep = c.step
+	return
+}
+
+// LoadSlidingWindow : use sync.Mutex when l is nil.
+func LoadSlidingWindow(start, window int64, slots int, l sync.Locker,
+	end int64, deltas []int64, deltaStep int64) Counter {
+
+	c := newSlidingWindow(start, window, slots, l)
+
+	segs := int64(math.Max(math.Round(float64(deltaStep)/float64(c.step)), 1.0))
+
+	for i := int64(0); i < int64(len(deltas)); i++ {
+		delta := deltas[i]
+		remain := delta
+		now := start + i*deltaStep
+
+		for j := int64(0); j < segs; j++ {
+			if now >= end {
+				now = end
+				break
+			}
+			c.Advance(now, delta/segs)
+			remain -= delta / segs
+			now += deltaStep / segs
+		}
+
+		if now >= end {
+			now = end
+		}
+		c.Advance(now, remain)
+	}
+
+	return c
 }
