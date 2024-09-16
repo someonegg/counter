@@ -30,11 +30,7 @@ type accumulator struct {
 	count int64
 }
 
-func NewAccumulator() Counter {
-	return NewAccumulatorEx(0)
-}
-
-func NewAccumulatorEx(start int64) Counter {
+func NewAccumulator(start int64) Counter {
 	return &accumulator{start: start}
 }
 
@@ -68,8 +64,19 @@ func (c *accumulator) Dump() (start, end int64, deltas []int64, deltaStep int64)
 	return
 }
 
-type slidingWindow struct {
-	l     sync.Locker
+type Locker[L any] interface {
+	sync.Locker
+	*L
+}
+
+type nopLocker struct{}
+
+func (l nopLocker) Lock() {}
+
+func (l nopLocker) Unlock() {}
+
+type slidingWindow[L any, PL Locker[L]] struct {
+	l     L
 	start int64
 	step  int64
 	slots []int64
@@ -78,20 +85,15 @@ type slidingWindow struct {
 }
 
 func NewSlidingWindow(start, window int64, slots int) Counter {
-	return newSlidingWindow(start, window, slots, nil)
+	return newSlidingWindow[sync.Mutex](start, window, slots)
 }
 
-// NewSlidingWindowEx : use sync.Mutex when l is nil.
-func NewSlidingWindowEx(start, window int64, slots int, l sync.Locker) Counter {
-	return newSlidingWindow(start, window, slots, l)
+func NewSlidingWindowNoLock(start, window int64, slots int) Counter {
+	return newSlidingWindow[nopLocker](start, window, slots)
 }
 
-func newSlidingWindow(start, window int64, slots int, l sync.Locker) *slidingWindow {
-	if l == nil {
-		l = &sync.Mutex{}
-	}
-	return &slidingWindow{
-		l:     l,
+func newSlidingWindow[L any, PL Locker[L]](start, window int64, slots int) *slidingWindow[L, PL] {
+	return &slidingWindow[L, PL]{
 		start: start,
 		step:  window / int64(slots),
 		slots: make([]int64, slots+1),
@@ -100,40 +102,40 @@ func newSlidingWindow(start, window int64, slots int, l sync.Locker) *slidingWin
 	}
 }
 
-func (c *slidingWindow) Zero() {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Zero() {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 	for i := 0; i < len(c.slots); i++ {
 		c.slots[i] = 0
 	}
 	c.count = 0
 }
 
-func (c *slidingWindow) Advance(now int64, delta int64) int64 {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Advance(now int64, delta int64) int64 {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 	c.advance(now, delta)
 	return c.calculate()
 }
 
-func (c *slidingWindow) Revoke(hist int64, delta int64) int64 {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Revoke(hist int64, delta int64) int64 {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 	c.revoke(hist, delta)
 	return c.calculate()
 }
 
-func (c *slidingWindow) Radvance(now, hist int64, delta int64) int64 {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Radvance(now, hist int64, delta int64) int64 {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 	c.revoke(hist, delta)
 	c.advance(now, delta)
 	return c.calculate()
 }
 
-func (c *slidingWindow) Duration() int64 {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Duration() int64 {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 	win := c.step * int64(len(c.slots)-1)
 	dur := c.now - c.start
 	if dur > win {
@@ -142,7 +144,7 @@ func (c *slidingWindow) Duration() int64 {
 	return dur
 }
 
-func (c *slidingWindow) advance(now int64, delta int64) {
+func (c *slidingWindow[L, PL]) advance(now int64, delta int64) {
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
 	if current < 0 {
@@ -182,7 +184,7 @@ func (c *slidingWindow) advance(now int64, delta int64) {
 	c.now = now
 }
 
-func (c *slidingWindow) revoke(hist int64, delta int64) {
+func (c *slidingWindow[L, PL]) revoke(hist int64, delta int64) {
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
 	if current < 0 {
@@ -200,7 +202,7 @@ func (c *slidingWindow) revoke(hist int64, delta int64) {
 	}
 }
 
-func (c *slidingWindow) calculate() int64 {
+func (c *slidingWindow[L, PL]) calculate() int64 {
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
 	if current < 0 {
@@ -211,9 +213,9 @@ func (c *slidingWindow) calculate() int64 {
 	return c.count - int64(float64(expired)*percent)
 }
 
-func (c *slidingWindow) Dump() (start, end int64, deltas []int64, deltaStep int64) {
-	c.l.Lock()
-	defer c.l.Unlock()
+func (c *slidingWindow[L, PL]) Dump() (start, end int64, deltas []int64, deltaStep int64) {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
 
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
@@ -238,12 +240,25 @@ func (c *slidingWindow) Dump() (start, end int64, deltas []int64, deltaStep int6
 	return
 }
 
-// LoadSlidingWindow : use sync.Mutex when l is nil.
-func LoadSlidingWindow(start, window int64, slots int, l sync.Locker,
-	end int64, deltas []int64, deltaStep int64) Counter {
+func LoadSlidingWindow(
+	start, end int64, deltas []int64, deltaStep int64,
+	window int64, slots int) Counter {
 
-	c := newSlidingWindow(start, window, slots, l)
+	c := newSlidingWindow[sync.Mutex](start, window, slots)
+	c.load(start, end, deltas, deltaStep)
+	return c
+}
 
+func LoadSlidingWindowNoLock(
+	start, end int64, deltas []int64, deltaStep int64,
+	window int64, slots int) Counter {
+
+	c := newSlidingWindow[nopLocker](start, window, slots)
+	c.load(start, end, deltas, deltaStep)
+	return c
+}
+
+func (c *slidingWindow[L, PL]) load(start, end int64, deltas []int64, deltaStep int64) {
 	segs := int64(math.Max(math.Round(float64(deltaStep)/float64(c.step)), 1.0))
 
 	for i := int64(0); i < int64(len(deltas)); i++ {
@@ -266,6 +281,4 @@ func LoadSlidingWindow(start, window int64, slots int, l sync.Locker,
 		}
 		c.Advance(now, remain)
 	}
-
-	return c
 }

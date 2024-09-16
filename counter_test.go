@@ -34,6 +34,24 @@ func TestSlidingWindow(t *testing.T) {
 		t.FailNow()
 	}
 
+	c = NewSlidingWindowNoLock(now, minute, 60)
+
+	now += second / 5
+	count = c.Advance(now, 0)
+	dur = c.Duration()
+	t.Log(count, c, dur)
+
+	for i := 0; i < 60; i++ {
+		c.Advance(now, 10)
+		now += second
+	}
+	count = c.Advance(now, 0)
+	dur = c.Duration()
+	t.Log(count, c, dur)
+	if count != 598 {
+		t.FailNow()
+	}
+
 	now += 6 * second / 5
 	count = c.Radvance(now, start, 0)
 	dur = c.Duration()
@@ -89,10 +107,18 @@ func TestSlidingWindow(t *testing.T) {
 	start, end, deltas, deltaStep := c.Dump()
 	t.Log(start, end, deltaStep, deltas)
 
-	c2 := LoadSlidingWindow(start, minute, 180, nil, end, deltas, deltaStep)
+	c2 := LoadSlidingWindow(start, end, deltas, deltaStep, minute, 180)
 	count = c2.Advance(now, 0)
 	dur = c2.Duration()
 	t.Log(count, c2, dur)
+	if count != 596 {
+		t.FailNow()
+	}
+
+	c3 := LoadSlidingWindowNoLock(start, end, deltas, deltaStep, minute, 180)
+	count = c3.Advance(now, 0)
+	dur = c3.Duration()
+	t.Log(count, c3, dur)
 	if count != 596 {
 		t.FailNow()
 	}
