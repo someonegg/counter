@@ -64,18 +64,7 @@ func (c *accumulator) Dump() (start, end int64, deltas []int64, deltaStep int64)
 	return
 }
 
-type Locker[L any] interface {
-	sync.Locker
-	*L
-}
-
-type nopLocker struct{}
-
-func (l nopLocker) Lock() {}
-
-func (l nopLocker) Unlock() {}
-
-type slidingWindow[L any, PL Locker[L]] struct {
+type slidingWindow[L any, PL locker[L]] struct {
 	l     L
 	start int64
 	step  int64
@@ -92,7 +81,7 @@ func NewSlidingWindowNoLock(start, window int64, slots int) Counter {
 	return newSlidingWindow[nopLocker](start, window, slots)
 }
 
-func newSlidingWindow[L any, PL Locker[L]](start, window int64, slots int) *slidingWindow[L, PL] {
+func newSlidingWindow[L any, PL locker[L]](start, window int64, slots int) *slidingWindow[L, PL] {
 	return &slidingWindow[L, PL]{
 		start: start,
 		step:  window / int64(slots),
