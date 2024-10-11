@@ -6,7 +6,6 @@
 package counter
 
 import (
-	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -14,23 +13,14 @@ import (
 // Counter is safe for concurrent use by multiple goroutines.
 type Counter interface {
 	Advance(now int64, delta int64) (count int64)
-	AdvanceEx(now int64, delta int64) (count, duration int64)
-
 	// Revoke try to undo the delta of that historical moment.
 	Revoke(hist int64, delta int64) (count int64)
-	RevokeEx(hist int64, delta int64) (count, duration int64)
-
 	// Radvance will Revoke and then Advance.
 	Radvance(now, hist int64, delta int64) (count int64)
-	RadvanceEx(now, hist int64, delta int64) (count, duration int64)
-
-	// Time will not advance.
-	Count() int64
-	Duration() int64
-
-	Dump() (start, end int64, deltas []int64, deltaStep int64)
-
+	// Reset
 	Zero()
+
+	Duration() int64
 }
 
 type accumulator struct {
@@ -52,16 +42,8 @@ func (c *accumulator) Advance(now int64, delta int64) int64 {
 	return atomic.AddInt64(&c.count, delta)
 }
 
-func (c *accumulator) AdvanceEx(now int64, delta int64) (int64, int64) {
-	return c.Advance(now, delta), c.Duration()
-}
-
 func (c *accumulator) Revoke(hist int64, delta int64) int64 {
 	return atomic.AddInt64(&c.count, -delta)
-}
-
-func (c *accumulator) RevokeEx(hist int64, delta int64) (int64, int64) {
-	return c.Revoke(hist, delta), c.Duration()
 }
 
 func (c *accumulator) Radvance(now, hist int64, delta int64) int64 {
@@ -69,24 +51,8 @@ func (c *accumulator) Radvance(now, hist int64, delta int64) int64 {
 	return c.count
 }
 
-func (c *accumulator) RadvanceEx(now, hist int64, delta int64) (int64, int64) {
-	return c.Radvance(now, hist, delta), c.Duration()
-}
-
-func (c *accumulator) Count() int64 {
-	return c.count
-}
-
 func (c *accumulator) Duration() int64 {
 	return c.now - c.start
-}
-
-func (c *accumulator) Dump() (start, end int64, deltas []int64, deltaStep int64) {
-	start = c.start
-	end = c.now
-	deltas = []int64{c.count}
-	deltaStep = end - start
-	return
 }
 
 type slidingWindow[L any, PL locker[L]] struct {
@@ -132,13 +98,6 @@ func (c *slidingWindow[L, PL]) Advance(now int64, delta int64) int64 {
 	return c.calculate()
 }
 
-func (c *slidingWindow[L, PL]) AdvanceEx(now int64, delta int64) (int64, int64) {
-	PL(&c.l).Lock()
-	defer PL(&c.l).Unlock()
-	c.advance(now, delta)
-	return c.calculate(), c.duration()
-}
-
 func (c *slidingWindow[L, PL]) Revoke(hist int64, delta int64) int64 {
 	PL(&c.l).Lock()
 	defer PL(&c.l).Unlock()
@@ -146,32 +105,11 @@ func (c *slidingWindow[L, PL]) Revoke(hist int64, delta int64) int64 {
 	return c.calculate()
 }
 
-func (c *slidingWindow[L, PL]) RevokeEx(hist int64, delta int64) (int64, int64) {
-	PL(&c.l).Lock()
-	defer PL(&c.l).Unlock()
-	c.revoke(hist, delta)
-	return c.calculate(), c.duration()
-}
-
 func (c *slidingWindow[L, PL]) Radvance(now, hist int64, delta int64) int64 {
 	PL(&c.l).Lock()
 	defer PL(&c.l).Unlock()
 	c.revoke(hist, delta)
 	c.advance(now, delta)
-	return c.calculate()
-}
-
-func (c *slidingWindow[L, PL]) RadvanceEx(now, hist int64, delta int64) (int64, int64) {
-	PL(&c.l).Lock()
-	defer PL(&c.l).Unlock()
-	c.revoke(hist, delta)
-	c.advance(now, delta)
-	return c.calculate(), c.duration()
-}
-
-func (c *slidingWindow[L, PL]) Count() int64 {
-	PL(&c.l).Lock()
-	defer PL(&c.l).Unlock()
 	return c.calculate()
 }
 
@@ -196,7 +134,9 @@ func (c *slidingWindow[L, PL]) advance(now int64, delta int64) {
 	if next == current {
 		c.slots[next%C] += delta
 		c.count += delta
-		c.now = now
+		if now > c.now {
+			c.now = now
+		}
 		return
 	}
 
@@ -259,7 +199,8 @@ func (c *slidingWindow[L, PL]) duration() int64 {
 	return dur
 }
 
-func (c *slidingWindow[L, PL]) Dump() (start, end int64, deltas []int64, deltaStep int64) {
+/*
+func (c *slidingWindow[L, PL]) dump() (start, end int64, deltas []int64, deltaStep int64) {
 	PL(&c.l).Lock()
 	defer PL(&c.l).Unlock()
 
@@ -286,24 +227,6 @@ func (c *slidingWindow[L, PL]) Dump() (start, end int64, deltas []int64, deltaSt
 	return
 }
 
-func LoadSlidingWindow(
-	start, end int64, deltas []int64, deltaStep int64,
-	window int64, slots int) Counter {
-
-	c := newSlidingWindow[sync.Mutex](start, window, slots)
-	c.load(start, end, deltas, deltaStep)
-	return c
-}
-
-func LoadSlidingWindowNoLock(
-	start, end int64, deltas []int64, deltaStep int64,
-	window int64, slots int) Counter {
-
-	c := newSlidingWindow[nopLocker](start, window, slots)
-	c.load(start, end, deltas, deltaStep)
-	return c
-}
-
 func (c *slidingWindow[L, PL]) load(start, end int64, deltas []int64, deltaStep int64) {
 	segs := int64(math.Max(math.Round(float64(deltaStep)/float64(c.step)), 1.0))
 
@@ -328,3 +251,4 @@ func (c *slidingWindow[L, PL]) load(start, end int64, deltas []int64, deltaStep 
 		c.Advance(now, remain)
 	}
 }
+*/

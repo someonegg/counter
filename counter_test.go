@@ -27,7 +27,8 @@ func TestSlidingWindow(t *testing.T) {
 		c.Advance(now, 10)
 		now += second
 	}
-	count, dur = c.AdvanceEx(now, 0)
+	count = c.Advance(now, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 598 || dur != c.Duration() {
 		t.FailNow()
@@ -36,21 +37,24 @@ func TestSlidingWindow(t *testing.T) {
 	c = NewSlidingWindowNoLock(now, minute, 60)
 
 	now += second / 5
-	count, dur = c.AdvanceEx(now, 0)
+	count = c.Advance(now, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 
 	for i := 0; i < 60; i++ {
 		c.Advance(now, 10)
 		now += second
 	}
-	count, dur = c.AdvanceEx(now, 0)
+	count = c.Advance(now, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 598 || dur != c.Duration() {
 		t.FailNow()
 	}
 
 	now += 6 * second / 5
-	count, dur = c.RadvanceEx(now, start, 0)
+	count = c.Radvance(now, start, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 586 || dur != c.Duration() {
 		t.FailNow()
@@ -74,12 +78,14 @@ func TestSlidingWindow(t *testing.T) {
 		}
 		now += second
 	}
-	count, dur = c.AdvanceEx(now, 0)
+	count = c.Advance(now, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 610 || dur != c.Duration() {
 		t.FailNow()
 	}
-	count, dur = c.RadvanceEx(now, now-second, 15)
+	count = c.Radvance(now, now-second, 15)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 613 || dur != c.Duration() {
 		t.FailNow()
@@ -91,28 +97,10 @@ func TestSlidingWindow(t *testing.T) {
 		c.Advance(now, 10)
 		now += second
 	}
-	count, dur = c.AdvanceEx(now, 0)
+	count = c.Advance(now, 0)
+	dur = c.Duration()
 	t.Log(count, c, dur)
 	if count != 596 || dur != c.Duration() {
-		t.FailNow()
-	}
-
-	start, end, deltas, deltaStep := c.Dump()
-	t.Log(start, end, deltaStep, deltas)
-
-	c2 := LoadSlidingWindow(start, end, deltas, deltaStep, minute, 180)
-	count = c2.Advance(now, 0)
-	dur = c2.Duration()
-	t.Log(count, c2, dur)
-	if count != 596 {
-		t.FailNow()
-	}
-
-	c3 := LoadSlidingWindowNoLock(start, end, deltas, deltaStep, minute, 180)
-	count = c3.Advance(now, 0)
-	dur = c3.Duration()
-	t.Log(count, c3, dur)
-	if count != 596 {
 		t.FailNow()
 	}
 }
