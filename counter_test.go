@@ -103,4 +103,25 @@ func TestSlidingWindow(t *testing.T) {
 	if count != 596 || dur != c.Duration() {
 		t.FailNow()
 	}
+
+	start, end, step, deltas := c.(Dumper).Dump()
+	t.Log(start, end, step, deltas)
+
+	c2 := NewSlidingWindow(now, minute, 180)
+	c2.(Loader).Load(start, end, step, deltas)
+	count = c2.Advance(now, 0)
+	dur = c2.Duration()
+	t.Log(count, c2, dur)
+	if count != 596 {
+		t.FailNow()
+	}
+
+	c3 := NewSlidingWindowNoLock(now, minute, 180)
+	c3.(Loader).Load(start, end, step, deltas)
+	count = c3.Advance(now, 0)
+	dur = c3.Duration()
+	t.Log(count, c3, dur)
+	if count != 596 {
+		t.FailNow()
+	}
 }

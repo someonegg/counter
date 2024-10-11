@@ -6,6 +6,7 @@
 package counter
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -17,7 +18,7 @@ type Counter interface {
 	Revoke(hist int64, delta int64) (count int64)
 	// Radvance will Revoke and then Advance.
 	Radvance(now, hist int64, delta int64) (count int64)
-	// Reset
+	// Clear count
 	Zero()
 
 	Duration() int64
@@ -82,13 +83,21 @@ func newSlidingWindow[L any, PL locker[L]](start, window int64, slots int) *slid
 	}
 }
 
-func (c *slidingWindow[L, PL]) Zero() {
-	PL(&c.l).Lock()
-	defer PL(&c.l).Unlock()
+func (c *slidingWindow[L, PL]) reset(start int64) {
+	c.start = start
 	for i := 0; i < len(c.slots); i++ {
 		c.slots[i] = 0
 	}
 	c.count = 0
+	c.now = start
+}
+
+func (c *slidingWindow[L, PL]) Zero() {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
+	now := c.now
+	c.reset(c.start)
+	c.now = now
 }
 
 func (c *slidingWindow[L, PL]) Advance(now int64, delta int64) int64 {
@@ -199,8 +208,11 @@ func (c *slidingWindow[L, PL]) duration() int64 {
 	return dur
 }
 
-/*
-func (c *slidingWindow[L, PL]) dump() (start, end int64, deltas []int64, deltaStep int64) {
+type Dumper interface {
+	Dump() (start, end int64, step int64, deltas []int64)
+}
+
+func (c *slidingWindow[L, PL]) Dump() (start, end int64, step int64, deltas []int64) {
 	PL(&c.l).Lock()
 	defer PL(&c.l).Unlock()
 
@@ -222,33 +234,41 @@ func (c *slidingWindow[L, PL]) dump() (start, end int64, deltas []int64, deltaSt
 
 	start = c.start + begin*c.step
 	end = c.now
+	step = c.step
 	deltas = slots
-	deltaStep = c.step
 	return
 }
 
-func (c *slidingWindow[L, PL]) load(start, end int64, deltas []int64, deltaStep int64) {
-	segs := int64(math.Max(math.Round(float64(deltaStep)/float64(c.step)), 1.0))
+type Loader interface {
+	Load(start, end int64, step int64, deltas []int64)
+}
+
+func (c *slidingWindow[L, PL]) Load(start, end int64, step int64, deltas []int64) {
+	PL(&c.l).Lock()
+	defer PL(&c.l).Unlock()
+
+	c.reset(start)
+
+	segs := int64(math.Max(math.Round(float64(step)/float64(c.step)), 1.0))
 
 	for i := int64(0); i < int64(len(deltas)); i++ {
 		delta := deltas[i]
 		remain := delta
-		now := start + i*deltaStep
+		now := start + i*step
 
 		for j := int64(0); j < segs; j++ {
 			if now >= end {
 				now = end
 				break
 			}
-			c.Advance(now, delta/segs)
+			c.advance(now, delta/segs)
 			remain -= delta / segs
-			now += deltaStep / segs
+			now += step / segs
 		}
 
 		if now >= end {
 			now = end
 		}
-		c.Advance(now, remain)
+		c.advance(now, remain)
 	}
 }
-*/
