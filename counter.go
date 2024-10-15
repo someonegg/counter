@@ -129,6 +129,10 @@ func (c *slidingWindow[L, PL]) Duration() int64 {
 }
 
 func (c *slidingWindow[L, PL]) advance(now int64, delta int64) {
+	if delta == 0 && now <= c.now {
+		return
+	}
+
 	C := int64(len(c.slots))
 	current := (c.now - c.start) / c.step
 	if current < 0 {
